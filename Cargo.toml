@@ -1,0 +1,28 @@
+[package]
+name = "esp32c3-hal"
+version = "0.1.0"
+authors = ["Robert Wiewel <dev@ducktec.de>"]
+edition = "2018"
+readme = "README.md"
+repository = "https://github.com/ducktec/esp32c3-hal"
+description = "A Rust HAL for the ESP32-C3 SoC "
+keywords = ["no-std", "esp32-c3", "riscv", "esp32", "bluetooth", "wifi", "embedded"]
+categories = ["embedded", "hardware-support", "no-std"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+esp32c3 = "0.1.2"
+riscv = "0.6.0"
+
+[dev-dependencies]
+riscv-rt = "0.8.0"
+panic-halt = "0.2"
+
+[dependencies.embedded-hal]
+version = "0.2.5"
+
+[features]
+default=[]
+
+[[example]]
+name = "empty"
