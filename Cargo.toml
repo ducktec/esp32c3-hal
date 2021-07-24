@@ -15,7 +15,7 @@ esp32c3 = "0.1.2"
 riscv = "0.6.0"
 
 [dev-dependencies]
-riscv-rt = "0.8.0"
+riscv-rt = { path = "../riscv-rt" }
 panic-halt = "0.2"
 
 [dependencies.embedded-hal]
