@@ -1,9 +1,11 @@
 #![no_std]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub use esp32c3 as pac;
+
+pub mod control;
+pub mod prelude;
+pub mod timer;
+pub mod units;
+
+pub use crate::control::RtcCntl;
+pub use crate::timer::Timer;
