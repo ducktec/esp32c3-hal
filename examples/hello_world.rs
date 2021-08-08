@@ -15,20 +15,22 @@ fn main() -> ! {
     let peripherals = pac::Peripherals::take().unwrap();
 
     let rtccntl = RtcCntl::new(peripherals.RTCCNTL);
-    let mut timer = Timer::new(peripherals.TIMG0);
+    let mut timer0 = Timer::new(peripherals.TIMG0);
+    let mut timer1 = Timer::new(peripherals.TIMG1);
 
     rtccntl.set_super_wdt_enable(false);
     rtccntl.set_wdt_enable(false);
-    timer.disable();
+    timer0.disable();
+    timer1.disable();
 
     write_text(&peripherals.UART0);
 
-    timer.start(10_000_000u64);
+    timer1.start(10_000_000u64);
 
     // do nothing here
     loop {
         write_text(&peripherals.UART0);
-        block!(timer.wait()).unwrap();
+        block!(timer1.wait()).unwrap();
     }
 }
 

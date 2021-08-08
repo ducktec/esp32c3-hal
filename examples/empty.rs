@@ -14,11 +14,11 @@ fn main() -> ! {
     let peripherals = pac::Peripherals::take().unwrap();
 
     let rtccntl = RtcCntl::new(peripherals.RTCCNTL);
-    let mut timer = Timer::new(peripherals.TIMG0);
+    let mut timer0 = Timer::new(peripherals.TIMG0);
 
     rtccntl.set_super_wdt_enable(false);
     rtccntl.set_wdt_enable(false);
-    timer.disable();
+    timer0.disable();
 
     // do nothing here
     loop {}
