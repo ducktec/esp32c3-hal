@@ -1,6 +1,6 @@
 # ESP32-C3 HAL
 
-This is an **experimental** HAL crate for the [ESP32-C3 SoC](https://www.espressif.com/en/products/socs/esp32-c3).
+This is an **experimental** Rust HAL crate for the [ESP32-C3 SoC](https://www.espressif.com/en/products/socs/esp32-c3).
 
 > :warning: Please note the emphasis on **experimental**! Very little works (yet) and what works is not comprehsively tested and will almost certainly contain bugs 
 
@@ -11,7 +11,7 @@ The following table contains a list of ESP32-C3 relevant functional components a
 | Functional Component             | Fully Documented in TRM v0.3 | Prototype/Partial Support  | Full Support       |
 | -------------------------------- | ---------------------------- | -------------------------- | ------------------ |
 | TIMG (Timer + WDT)               | :x:                          | :heavy_check_mark:         | :x:                |
-| UART                             | :x:                          | :x:                        | :x:                |
+| UART                             | :heavy_check_mark:           | :heavy_check_mark:         | :x:                |
 | SPI                              | :x:                          | :x:                        | :x:                |
 | I2C                              | :x:                          | :x:                        | :x:                |
 | GPIO                             | :x:                          | :x:                        | :x:                |
@@ -65,6 +65,14 @@ esptool.py --port /dev/ttyUSB0 --chip esp32c3 write_flash --flash_mode dio --fla
 The HAL comes with a number of examples:
 - `empty.rs`: Start and enter an endless loop. This is to demonstrate that all relevant watchdogs can be disabled and the SoC does not continuously reset.
 - `hello_world.rs`: Write "Hello World" to UART0 (with the default pins) every second.
+
+## Additional Documentation
+
+- A step-by-step guide on how to debug a rust application on an ESP32-C3 Soc is provided [here](/documentation/debugging.md).
+
+## MSRV
+
+This project follows the rust embedded devices working group [MSRV policy](https://github.com/rust-embedded/wg/blob/master/ops/msrv.md).
 
 ## License
 
