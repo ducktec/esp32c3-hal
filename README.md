@@ -84,6 +84,8 @@ Licensed under either of
 
 at your option.
 
+This project makes use of original and modified code from the [esp32-hal] project, which is published under the same two licensing options and is used under the MIT license in this context. This code use is reflected in the included license file.
+
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
