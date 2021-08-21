@@ -128,4 +128,5 @@ pub enum OutputSignal {
     CLK_OUT3 = 125,
     SPICS1 = 126,
     USB_JTAG_TRST = 127,
+    GPIO = 128,
 }
