@@ -20,8 +20,8 @@ impl RtcCntl {
 
         // Set autofeed so that the Super WDT is never triggerd
         self.rtc_cntl
-            .rtc_cntl_swd_conf
-            .write(|w| w.rtc_cntl_swd_auto_feed_en().bit(!enable));
+            .swd_conf
+            .write(|w| w.swd_auto_feed_en().bit(!enable));
 
         self.set_swd_write_protection(true);
     }
@@ -36,8 +36,8 @@ impl RtcCntl {
         };
 
         self.rtc_cntl
-            .rtc_cntl_swd_wprotect
-            .write(|w| unsafe { w.rtc_cntl_swd_wkey().bits(wkey) });
+            .swd_wprotect
+            .write(|w| unsafe { w.swd_wkey().bits(wkey) });
     }
 
     /// Set the status of the (regular) Watchdog timer (WDT)
@@ -45,9 +45,7 @@ impl RtcCntl {
         self.set_wdt_write_protection(false);
 
         // Disable the RCT_CNTL WDT
-        self.rtc_cntl
-            .rtc_cntl_wdtconfig0
-            .write(|w| w.rtc_cntl_wdt_en().bit(enable));
+        self.rtc_cntl.wdtconfig0.write(|w| w.wdt_en().bit(enable));
 
         self.set_wdt_write_protection(true);
     }
@@ -62,7 +60,7 @@ impl RtcCntl {
         };
 
         self.rtc_cntl
-            .rtc_cntl_wdtwprotect
-            .write(|w| unsafe { w.rtc_cntl_wdt_wkey().bits(wkey) });
+            .wdtwprotect
+            .write(|w| unsafe { w.wdt_wkey().bits(wkey) });
     }
 }
