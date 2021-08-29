@@ -29,3 +29,12 @@ default=[]
 
 [[example]]
 name = "empty"
+
+[[example]]
+name = "blinky"
+
+[[example]]
+name = "hello_world"
+
+[[example]]
+name = "uart_loopback"

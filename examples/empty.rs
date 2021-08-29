@@ -1,11 +1,9 @@
 #![no_std]
 #![no_main]
 
+use esp32c_rt::entry;
 #[allow(unused_imports)]
 use panic_halt;
-use riscv_rt::entry;
-
-extern crate esp32c3_hal;
 
 use esp32c3_hal::{pac, prelude::*, RtcCntl, Timer};
 

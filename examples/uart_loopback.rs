@@ -1,9 +1,9 @@
 #![no_std]
 #![no_main]
 
+use esp32c_rt::entry;
 #[allow(unused_imports)]
 use panic_halt;
-use riscv_rt::entry;
 
 use esp32c3_hal::{pac, prelude::*, RtcCntl, Serial, Timer};
 use nb::block;
