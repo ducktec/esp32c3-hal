@@ -1,6 +1,6 @@
 on: push
 
-name: Continuous integration
+name: CI
 
 jobs:
   ci:
@@ -41,8 +41,3 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
-
-      - uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
