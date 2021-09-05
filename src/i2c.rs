@@ -21,7 +21,7 @@ use crate::pac::I2C0;
 
 use embedded_hal::blocking::i2c::*;
 
-const SOURCE_CLK_FREQ: u32 = 40_000_000;
+const SOURCE_CLK_FREQ: u32 = 20_000_000;
 
 /// I2C-specific errors
 #[derive(Debug)]
@@ -31,7 +31,6 @@ pub enum Error {
 }
 
 /// I2C peripheral (I2C)
-#[allow(dead_code)]
 pub struct I2C<I2C0> {
     reg: I2C0,
 }
@@ -61,6 +60,9 @@ impl I2C<I2C0> {
             .connect_peripheral_to_output(OutputSignal::I2CEXT0_SCL)
             .connect_input_to_peripheral(InputSignal::I2CEXT0_SCL);
 
+        // Reset entire peripheral (also resets fifo)
+        i2c.reset();
+
         // Disable all I2C interrupts
         i2c.reg.int_ena.write(|w| unsafe { w.bits(0) });
         // Clear all I2C interrupts
@@ -84,14 +86,13 @@ impl I2C<I2C0> {
                 .clear_bit()
                 .clk_en()
                 .set_bit()
+                .arbitration_en()
+                .clear_bit()
         });
 
         i2c.reg
             .clk_conf
             .modify(|_, w| unsafe { w.sclk_sel().clear_bit().sclk_div_num().bits(1) });
-
-        // Reset entire peripheral (also resets fifo)
-        i2c.reset();
 
         // Configure filter
         i2c.set_filter(Some(7), Some(7));
@@ -99,20 +100,23 @@ impl I2C<I2C0> {
         // Configure frequency
         i2c.set_frequency(frequency);
 
+        // Propagate configuration changes
+        i2c.reg
+            .ctr
+            .modify(|_, w| unsafe { w.conf_upgate().set_bit() });
+
         Ok(i2c)
     }
 
     /// Resets the transmit and receive FIFO buffers
-    fn reset_fifo(&mut self) {
-        self.reg.fifo_conf.modify(|_, w| w.tx_fifo_rst().set_bit());
+    pub fn reset_fifo(&mut self) {
+        // First, reset the fifo buffers
         self.reg
             .fifo_conf
-            .modify(|_, w| w.tx_fifo_rst().clear_bit());
-
-        self.reg.fifo_conf.modify(|_, w| w.rx_fifo_rst().set_bit());
+            .modify(|_, w| w.tx_fifo_rst().set_bit().rx_fifo_rst().set_bit());
         self.reg
             .fifo_conf
-            .modify(|_, w| w.rx_fifo_rst().clear_bit());
+            .modify(|_, w| w.tx_fifo_rst().clear_bit().rx_fifo_rst().clear_bit());
 
         // Make sure that the FIFO operates in FIFO-mode
         self.reg
@@ -127,7 +131,6 @@ impl I2C<I2C0> {
 
         // Reset the FSM
         self.reg.ctr.modify(|_, w| w.fsm_rst().set_bit());
-        self.reg.ctr.modify(|_, w| w.fsm_rst().clear_bit());
     }
 
     /// Sets the filter with a supplied threshold in clock cycles for which a pulse must be present to pass the filter
@@ -196,7 +199,9 @@ impl I2C<I2C0> {
             self.reg.scl_stop_hold.write(|w| w.time().bits(hold));
 
             // timeout
-            self.reg.to.write(|w| w.time_out_reg().bits(tout.into()));
+            self.reg
+                .to
+                .write(|w| w.time_out_reg().bits(tout.into()).time_out_en().set_bit());
         }
     }
 
@@ -247,22 +252,21 @@ impl I2C<I2C0> {
 
         // Clear all I2C interrupts
         self.reg.int_clr.write(|w| unsafe { w.bits(0x3FFF) });
+
+        self.reg
+            .ctr
+            .modify(|_, w| unsafe { w.conf_upgate().set_bit() });
+
         // Start transmission
         self.reg.ctr.modify(|_, w| w.trans_start().set_bit());
 
         // Busy wait for all three commands to be marked as done
         // TODO: Evaluate the interrupts to check agains timeout and ack failure interrupts
-        // while self.reg.comd0.read().command0_done().bit() != true {}
-        // while self.reg.comd1.read().command1_done().bit() != true {}
-        // while self.reg.comd2.read().command2_done().bit() != true {}
-
-        // while self.reg.int_raw.read().rxfifo_ovf_int_raw().bit_is_clear() {}
+        while self.reg.comd0.read().command0_done().bit() != true {}
+        while self.reg.comd1.read().command1_done().bit() != true {}
+        while self.reg.comd2.read().command2_done().bit() != true {}
 
         Ok(())
-    }
-
-    pub fn get_interrupts(&self) -> u32 {
-        self.reg.int_raw.read().bits()
     }
 
     // // TODO: Enable ACK checks and return error if ACK check fails
@@ -617,9 +621,9 @@ enum Ack {
 
 #[allow(dead_code)]
 enum Opcode {
-    RSTART = 0,
+    RSTART = 6,
     WRITE = 1,
-    READ = 2,
-    STOP = 3,
+    READ = 3,
+    STOP = 2,
     END = 4,
 }
