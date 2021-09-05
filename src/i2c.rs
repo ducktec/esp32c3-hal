@@ -84,10 +84,9 @@ impl I2C<I2C0> {
                 .clear_bit()
                 .rx_lsb_first()
                 .clear_bit()
+                // Ensure that clock is enabled
                 .clk_en()
                 .set_bit()
-                .arbitration_en()
-                .clear_bit()
         });
 
         i2c.reg
@@ -101,9 +100,7 @@ impl I2C<I2C0> {
         i2c.set_frequency(frequency);
 
         // Propagate configuration changes
-        i2c.reg
-            .ctr
-            .modify(|_, w| unsafe { w.conf_upgate().set_bit() });
+        i2c.reg.ctr.modify(|_, w| w.conf_upgate().set_bit());
 
         Ok(i2c)
     }
@@ -205,8 +202,30 @@ impl I2C<I2C0> {
         }
     }
 
+    /// Start the actual transmission on a previously configured command set
+    ///
+    /// Includes the reset of the interrupts, the update of the peripheral configuration
+    /// and the actual transmission trigger
+    fn trigger_transmission(&mut self) {
+        // Clear all I2C interrupts
+        self.reg.int_clr.write(|w| unsafe { w.bits(0x3FFF) });
+
+        // Ensure that the configuration of the peripheral is correctly propagated
+        self.reg.ctr.modify(|_, w| w.conf_upgate().set_bit());
+
+        // Start transmission
+        self.reg.ctr.modify(|_, w| w.trans_start().set_bit());
+    }
+
     /// Send bytes to a target slave with the address `addr`
     fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Error> {
+        // Load actual data into fifo
+        // TODO: Handle the case where we transfer an amount of data that is exceeding the
+        // FIFO size (i.e. > 32 bytes?)
+        if bytes.len() > 31 {
+            return Err(Error::ExceedingFifo);
+        }
+
         // Reset FIFO
         self.reset_fifo();
 
@@ -219,13 +238,6 @@ impl I2C<I2C0> {
         self.reg
             .data
             .write(|w| unsafe { w.fifo_rdata().bits(addr << 1 | OperationType::WRITE as u8) });
-
-        // Load actual data into fifo
-        // TODO: Handle the case where we transfer an amount of data that is exceeding the
-        // FIFO size (i.e. > 32 bytes?)
-        if bytes.len() > 31 {
-            return Err(Error::ExceedingFifo);
-        }
 
         for byte in bytes {
             self.reg
@@ -250,15 +262,8 @@ impl I2C<I2C0> {
             .comd2
             .write(|w| unsafe { w.command2().bits(Command::Stop.into()) });
 
-        // Clear all I2C interrupts
-        self.reg.int_clr.write(|w| unsafe { w.bits(0x3FFF) });
-
-        self.reg
-            .ctr
-            .modify(|_, w| unsafe { w.conf_upgate().set_bit() });
-
         // Start transmission
-        self.reg.ctr.modify(|_, w| w.trans_start().set_bit());
+        self.trigger_transmission();
 
         // Busy wait for all three commands to be marked as done
         // TODO: Evaluate the interrupts to check agains timeout and ack failure interrupts
@@ -269,234 +274,257 @@ impl I2C<I2C0> {
         Ok(())
     }
 
-    // // TODO: Enable ACK checks and return error if ACK check fails
-    // fn read(&mut self, addr: u8, buffer: &mut [u8]) -> Result<(), Error> {
-    //     // Reset FIFO
-    //     self.reset_fifo();
+    // TODO: Enable ACK checks and return error if ACK check fails
+    fn read(&mut self, addr: u8, buffer: &mut [u8]) -> Result<(), Error> {
+        // If the buffer size is > 32 bytes, this signals the
+        // intent to read more than that number of bytes, which we
+        // cannot achieve at this point in time
+        // TODO: Handle the case where we transfer an amount of data that is exceeding the
+        // FIFO size (i.e. > 32 bytes?)
+        if buffer.len() > 31 {
+            return Err(Error::ExceedingFifo);
+        }
 
-    //     // RSTART command
-    //     self.0
-    //         .comd0
-    //         .write(|w| unsafe { w.command0().bits(Command::Start.into()) });
+        // Reset FIFO
+        self.reset_fifo();
 
-    //     // Load address into FIFO
-    //     let fifo_addr = self.fifo_addr(OperationType::READ) as *mut u8;
-    //     unsafe { ptr::write_volatile(fifo_addr, addr << 1 | OperationType::READ as u8) };
+        // RSTART command
+        self.reg
+            .comd0
+            .write(|w| unsafe { w.command0().bits(Command::Start.into()) });
 
-    //     // WRITE command
-    //     self.0.comd1.write(|w| unsafe {
-    //         w.command1().bits(
-    //             Command::Write {
-    //                 ack_exp: Ack::ACK,
-    //                 ack_check_en: false,
-    //                 length: 1,
-    //             }
-    //             .into(),
-    //         )
-    //     });
+        // Load address and R/W bit into FIFO
+        self.reg
+            .data
+            .write(|w| unsafe { w.fifo_rdata().bits(addr << 1 | OperationType::READ as u8) });
 
-    //     if buffer.len() > 1 {
-    //         // READ command for first n - 1 bytes
-    //         self.0.comd2.write(|w| unsafe {
-    //             w.command2().bits(
-    //                 Command::Read {
-    //                     ack_value: Ack::ACK,
-    //                     length: buffer.len() as u8 - 1,
-    //                 }
-    //                 .into(),
-    //             )
-    //         });
+        // WRITE command that contains the slave adress and the operation bit
+        self.reg.comd1.write(|w| unsafe {
+            w.command1().bits(
+                Command::Write {
+                    ack_exp: Ack::ACK,
+                    ack_check_en: false,
+                    length: 1,
+                }
+                .into(),
+            )
+        });
 
-    //         // READ command for final byte
-    //         self.0.comd3.write(|w| unsafe {
-    //             w.command3().bits(
-    //                 Command::Read {
-    //                     ack_value: Ack::NACK,
-    //                     length: 1,
-    //                 }
-    //                 .into(),
-    //             )
-    //         });
+        // For the last read byte, no ack is requested, so this
+        // case has to be covered in an additional command
+        // (or as only case if we only read 1 byte in total)
+        if buffer.len() > 1 {
+            // READ command for first n - 1 bytes
+            self.reg.comd2.write(|w| unsafe {
+                w.command2().bits(
+                    Command::Read {
+                        ack_value: Ack::ACK,
+                        length: buffer.len() as u8 - 1,
+                    }
+                    .into(),
+                )
+            });
 
-    //         // STOP command
-    //         self.0
-    //             .comd4
-    //             .write(|w| unsafe { w.command4().bits(Command::Stop.into()) });
-    //     } else {
-    //         // READ command for byte
-    //         self.0.comd2.write(|w| unsafe {
-    //             w.command2().bits(
-    //                 Command::Read {
-    //                     ack_value: Ack::NACK,
-    //                     length: 1,
-    //                 }
-    //                 .into(),
-    //             )
-    //         });
+            // READ command for final byte
+            self.reg.comd3.write(|w| unsafe {
+                w.command3().bits(
+                    Command::Read {
+                        ack_value: Ack::NACK,
+                        length: 1,
+                    }
+                    .into(),
+                )
+            });
 
-    //         // STOP command
-    //         self.0
-    //             .comd3
-    //             .write(|w| unsafe { w.command3().bits(Command::Stop.into()) });
-    //     }
+            // STOP command
+            self.reg
+                .comd4
+                .write(|w| unsafe { w.command4().bits(Command::Stop.into()) });
+        } else {
+            // READ command for byte
+            self.reg.comd2.write(|w| unsafe {
+                w.command2().bits(
+                    Command::Read {
+                        ack_value: Ack::NACK,
+                        length: 1,
+                    }
+                    .into(),
+                )
+            });
 
-    //     // Start transmission
-    //     self.0.ctr.modify(|_, w| w.trans_start().set_bit());
+            // STOP command
+            self.reg
+                .comd3
+                .write(|w| unsafe { w.command3().bits(Command::Stop.into()) });
+        }
 
-    //     // Busy wait for all commands to be marked as done
-    //     while self.0.comd0.read().command0_done().bit() != true {}
-    //     while self.0.comd1.read().command1_done().bit() != true {}
+        // Start transmission
+        self.trigger_transmission();
 
-    //     if buffer.len() > 1 {
-    //         while self.0.comd2.read().command2_done().bit() != true {}
-    //         while self.0.comd3.read().command3_done().bit() != true {}
-    //         while self.0.comd4.read().command4_done().bit() != true {}
-    //     } else {
-    //         while self.0.comd2.read().command2_done().bit() != true {}
-    //         while self.0.comd3.read().command3_done().bit() != true {}
-    //     }
+        // Busy wait for all commands to be marked as done
+        while self.reg.comd0.read().command0_done().bit() != true {}
+        while self.reg.comd1.read().command1_done().bit() != true {}
 
-    //     // Read bytes from FIFO
-    //     for byte in buffer.iter_mut() {
-    //         *byte = unsafe { ptr::read_volatile(fifo_addr) };
-    //     }
+        if buffer.len() > 1 {
+            while self.reg.comd2.read().command2_done().bit() != true {}
+            while self.reg.comd3.read().command3_done().bit() != true {}
+            while self.reg.comd4.read().command4_done().bit() != true {}
+        } else {
+            while self.reg.comd2.read().command2_done().bit() != true {}
+            while self.reg.comd3.read().command3_done().bit() != true {}
+        }
 
-    //     Ok(())
-    // }
+        // Read bytes from FIFO
+        for byte in buffer.iter_mut() {
+            *byte = self.reg.data.read().fifo_rdata().bits();
+        }
 
-    // // TODO: Enable ACK checks and return error if ACK check fails
-    // fn write_read(&mut self, addr: u8, bytes: &[u8], buffer: &mut [u8]) -> Result<(), Error> {
-    //     // Reset FIFO
-    //     self.reset_fifo();
+        Ok(())
+    }
 
-    //     // START
-    //     self.0
-    //         .comd0
-    //         .write(|w| unsafe { w.command0().bits(Command::Start.into()) });
+    // TODO: Enable ACK checks and return error if ACK check fails
+    fn write_read(&mut self, addr: u8, bytes: &[u8], buffer: &mut [u8]) -> Result<(), Error> {
+        // If the buffer or bytes size is > 32 bytes, this signals the
+        // intent to read/write more than that number of bytes, which we
+        // cannot achieve at this point in time
+        // TODO: Handle the case where we transfer an amount of data that is exceeding the
+        // FIFO size (i.e. > 32 bytes?)
+        if buffer.len() > 31 || bytes.len() > 31 {
+            return Err(Error::ExceedingFifo);
+        }
 
-    //     // load into FIFO
-    //     let fifo_addr = self.fifo_addr(OperationType::WRITE) as *mut u8;
-    //     unsafe {
-    //         // load address
-    //         ptr::write_volatile(fifo_addr, addr << 1 | OperationType::WRITE as u8);
+        // Reset FIFO
+        self.reset_fifo();
 
-    //         // load data
-    //         for byte in bytes {
-    //             ptr::write_volatile(fifo_addr, *byte);
-    //         }
-    //     }
+        // START
+        self.reg
+            .comd0
+            .write(|w| unsafe { w.command0().bits(Command::Start.into()) });
 
-    //     // WRITE addr + data
-    //     self.0.comd1.write(|w| unsafe {
-    //         w.command1().bits(
-    //             Command::Write {
-    //                 ack_exp: Ack::ACK,
-    //                 ack_check_en: false,
-    //                 length: 1 + bytes.len() as u8,
-    //             }
-    //             .into(),
-    //         )
-    //     });
+        // Load address and R/W bit into FIFO
+        self.reg
+            .data
+            .write(|w| unsafe { w.fifo_rdata().bits(addr << 1 | OperationType::WRITE as u8) });
 
-    //     // repeat START
-    //     self.0
-    //         .comd2
-    //         .write(|w| unsafe { w.command2().bits(Command::Start.into()) });
+        // Load bytes to be written over the bus into the FIFO
+        for byte in bytes {
+            self.reg
+                .data
+                .write(|w| unsafe { w.fifo_rdata().bits(*byte) });
+        }
 
-    //     // load slave address into FIFO
-    //     unsafe { ptr::write_volatile(fifo_addr, addr << 1 | OperationType::READ as u8) };
+        // WRITE addr + data
+        self.reg.comd1.write(|w| unsafe {
+            w.command1().bits(
+                Command::Write {
+                    ack_exp: Ack::ACK,
+                    ack_check_en: false,
+                    length: 1 + bytes.len() as u8,
+                }
+                .into(),
+            )
+        });
 
-    //     // WRITE slave address
-    //     self.0.comd3.write(|w| unsafe {
-    //         w.command3().bits(
-    //             Command::Write {
-    //                 ack_exp: Ack::ACK,
-    //                 ack_check_en: false,
-    //                 length: 1,
-    //             }
-    //             .into(),
-    //         )
-    //     });
+        // repeat START
+        self.reg
+            .comd2
+            .write(|w| unsafe { w.command2().bits(Command::Start.into()) });
 
-    //     if buffer.len() > 1 {
-    //         // READ first n - 1 bytes
-    //         self.0.comd4.write(|w| unsafe {
-    //             w.command4().bits(
-    //                 Command::Read {
-    //                     ack_value: Ack::ACK,
-    //                     length: buffer.len() as u8 - 1,
-    //                 }
-    //                 .into(),
-    //             )
-    //         });
+        // Load address and R/W bit into FIFO
+        self.reg
+            .data
+            .write(|w| unsafe { w.fifo_rdata().bits(addr << 1 | OperationType::READ as u8) });
 
-    //         // READ last byte
-    //         self.0.comd5.write(|w| unsafe {
-    //             w.command5().bits(
-    //                 Command::Read {
-    //                     ack_value: Ack::NACK,
-    //                     length: 1,
-    //                 }
-    //                 .into(),
-    //             )
-    //         });
+        // WRITE slave address
+        self.reg.comd3.write(|w| unsafe {
+            w.command3().bits(
+                Command::Write {
+                    ack_exp: Ack::ACK,
+                    ack_check_en: false,
+                    length: 1,
+                }
+                .into(),
+            )
+        });
 
-    //         // STOP
-    //         self.0
-    //             .comd6
-    //             .write(|w| unsafe { w.command6().bits(Command::Stop.into()) });
-    //     } else {
-    //         // READ byte
-    //         self.0.comd4.write(|w| unsafe {
-    //             w.command4().bits(
-    //                 Command::Read {
-    //                     ack_value: Ack::NACK,
-    //                     length: 1,
-    //                 }
-    //                 .into(),
-    //             )
-    //         });
+        if buffer.len() > 1 {
+            // READ first n - 1 bytes
+            self.reg.comd4.write(|w| unsafe {
+                w.command4().bits(
+                    Command::Read {
+                        ack_value: Ack::ACK,
+                        length: buffer.len() as u8 - 1,
+                    }
+                    .into(),
+                )
+            });
 
-    //         // STOP
-    //         self.0
-    //             .comd5
-    //             .write(|w| unsafe { w.command5().bits(Command::Stop.into()) });
-    //     }
+            // READ last byte
+            self.reg.comd5.write(|w| unsafe {
+                w.command5().bits(
+                    Command::Read {
+                        ack_value: Ack::NACK,
+                        length: 1,
+                    }
+                    .into(),
+                )
+            });
 
-    //     // Start transmission
-    //     self.0.ctr.modify(|_, w| w.trans_start().set_bit());
+            // STOP
+            self.reg
+                .comd6
+                .write(|w| unsafe { w.command6().bits(Command::Stop.into()) });
+        } else {
+            // READ byte
+            self.reg.comd4.write(|w| unsafe {
+                w.command4().bits(
+                    Command::Read {
+                        ack_value: Ack::NACK,
+                        length: 1,
+                    }
+                    .into(),
+                )
+            });
 
-    //     // Busy wait for all commands to be marked as done
-    //     while self.0.comd0.read().command0_done().bit() != true {}
-    //     while self.0.comd1.read().command1_done().bit() != true {}
-    //     while self.0.comd2.read().command2_done().bit() != true {}
-    //     while self.0.comd3.read().command3_done().bit() != true {}
-    //     while self.0.comd4.read().command4_done().bit() != true {}
-    //     while self.0.comd5.read().command5_done().bit() != true {}
-    //     if buffer.len() > 1 {
-    //         while self.0.comd6.read().command6_done().bit() != true {}
-    //     }
+            // STOP
+            self.reg
+                .comd5
+                .write(|w| unsafe { w.command5().bits(Command::Stop.into()) });
+        }
 
-    //     // read bytes from FIFO
-    //     let fifo_addr = self.fifo_addr(OperationType::READ) as *mut u8;
-    //     for byte in buffer.iter_mut() {
-    //         *byte = unsafe { ptr::read_volatile(fifo_addr) };
-    //     }
+        // Start transmission
+        self.reg.ctr.modify(|_, w| w.trans_start().set_bit());
 
-    //     Ok(())
-    // }
+        // Busy wait for all commands to be marked as done
+        while self.reg.comd0.read().command0_done().bit() != true {}
+        while self.reg.comd1.read().command1_done().bit() != true {}
+        while self.reg.comd2.read().command2_done().bit() != true {}
+        while self.reg.comd3.read().command3_done().bit() != true {}
+        while self.reg.comd4.read().command4_done().bit() != true {}
+        while self.reg.comd5.read().command5_done().bit() != true {}
+        if buffer.len() > 1 {
+            while self.reg.comd6.read().command6_done().bit() != true {}
+        }
 
-    // /// Return the raw interface to the underlying I2C peripheral
-    // fn free(self) -> T {
-    //     self.0
-    // }
+        // Read bytes from FIFO
+        for byte in buffer.iter_mut() {
+            *byte = self.reg.data.read().fifo_rdata().bits();
+        }
+
+        Ok(())
+    }
+
+    /// Return the raw interface to the underlying I2C0 peripheral
+    pub fn free(self) -> I2C0 {
+        self.reg
+    }
 }
 
 impl Read for I2C<I2C0> {
     type Error = Error;
 
-    fn read(&mut self, _address: u8, _buffer: &mut [u8]) -> Result<(), Self::Error> {
-        todo!()
+    fn read(&mut self, address: u8, buffer: &mut [u8]) -> Result<(), Self::Error> {
+        self.read(address, buffer)
     }
 }
 
@@ -513,11 +541,11 @@ impl WriteRead for I2C<I2C0> {
 
     fn write_read(
         &mut self,
-        _address: u8,
-        _bytes: &[u8],
-        _buffer: &mut [u8],
+        address: u8,
+        bytes: &[u8],
+        buffer: &mut [u8],
     ) -> Result<(), Self::Error> {
-        todo!()
+        self.write_read(address, bytes, buffer)
     }
 }
 
