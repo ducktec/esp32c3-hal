@@ -410,22 +410,22 @@ impl I2C {
 
     /// Send data bytes from the `bytes` array to a target slave with the address `addr`
     fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Error> {
-        // Load actual data into fifo
-        // TODO: Handle the case where we transfer an amount of data that is exceeding the
-        // FIFO size (i.e. > 32 bytes?)
-        if bytes.len() > 31 {
-            return Err(Error::ExceedingFifo);
-        }
-
         // Reset FIFO and command list
         self.reset_fifo();
         self.reset_command_list();
 
-        // Add write operation
-        self.add_write_operation(addr, bytes, &mut self.reg.comd.iter())?;
+        // Split the potentially larger `bytes` array into chunks of (at most) 31 entries
+        // Together with the addr/access byte at the beginning of every transmission, this
+        // is the maximum size that we can store in the (default config) TX FIFO
+        for chunk in bytes.chunks(31) {
+            // Add write operation
+            self.add_write_operation(addr, chunk, &mut self.reg.comd.iter())?;
 
-        // Start transmission
-        self.execute_transmission()
+            // Start transmission
+            self.execute_transmission()?
+        }
+
+        Ok(())
     }
 
     /// Read bytes from a target slave with the address `addr`
