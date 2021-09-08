@@ -16,6 +16,8 @@
 //! - Prototypical support
 //! - Interrupt support
 
+use core::convert::TryInto;
+
 use crate::gpio::{InputPin, InputSignal, OutputPin, OutputSignal};
 use crate::pac::i2c::COMD;
 use crate::pac::I2C0;
@@ -24,7 +26,7 @@ use embedded_hal::blocking::i2c::*;
 
 const SOURCE_CLK_FREQ: u32 = 20_000_000;
 
-/// I2C-specific errors
+/// I2C-specific transmission errors
 #[derive(Debug)]
 pub enum Error {
     ExceedingFifo,
@@ -35,18 +37,28 @@ pub enum Error {
     CommandNrExceeded,
 }
 
+/// I2C-specific setup errors
+#[derive(Debug)]
+pub enum SetupError {
+    InvalidClkConfig,
+    PeripheralDisabled,
+}
+
 /// I2C peripheral (I2C)
 pub struct I2C {
     reg: I2C0,
 }
 
 impl I2C {
+    /// Create a new I2C instance
     pub fn new<SDA: OutputPin + InputPin, SCL: OutputPin + InputPin>(
         instance: I2C0,
         mut pins: Pins<SDA, SCL>,
         frequency: u32,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, SetupError> {
         let mut i2c = I2C { reg: instance };
+
+        // FIXME: Ensure/Check that the peripheral is actually switched on
 
         // Setup Pins
         pins.sda
@@ -92,16 +104,11 @@ impl I2C {
                 .set_bit()
         });
 
-        // FIXME: Move to set_frequency function
-        i2c.reg
-            .clk_conf
-            .modify(|_, w| unsafe { w.sclk_sel().clear_bit().sclk_div_num().bits(1) });
-
         // Configure filter
         i2c.set_filter(Some(7), Some(7));
 
         // Configure frequency
-        i2c.set_frequency(frequency);
+        i2c.set_frequency(SOURCE_CLK_FREQ, frequency)?;
 
         // Propagate configuration changes
         i2c.reg.ctr.modify(|_, w| w.conf_upgate().set_bit());
@@ -179,9 +186,18 @@ impl I2C {
     }
 
     /// Sets the frequency of the I2C interface by calculating and applying the associated timings
-    fn set_frequency(&mut self, freq: u32) {
-        // FIXME: Consolitate implementation
-        let half_cycle = ((SOURCE_CLK_FREQ / freq) / 2) as u16;
+    fn set_frequency(&mut self, source_clk: u32, bus_freq: u32) -> Result<(), SetupError> {
+        // TODO: Review configuration once documented in C3 TRM
+
+        // We want to configure the dividing factor as high as possible
+        let sclk_div: u8 = (source_clk / (bus_freq * 1024) + 1)
+            .try_into()
+            .map_err(|_| SetupError::InvalidClkConfig)?;
+
+        let half_cycle: u16 = (source_clk / (bus_freq * (sclk_div as u32) * 2) as u32)
+            .try_into()
+            .map_err(|_| SetupError::InvalidClkConfig)?;
+
         let scl_low = half_cycle;
         let scl_high = half_cycle;
         let sda_hold = half_cycle / 2;
@@ -192,6 +208,11 @@ impl I2C {
         let tout = (half_cycle * 20) as u8;
 
         unsafe {
+            // divider
+            self.reg
+                .clk_conf
+                .modify(|_, w| w.sclk_sel().clear_bit().sclk_div_num().bits(sclk_div));
+
             // scl period
             self.reg.scl_low_period.write(|w| w.period().bits(scl_low));
             self.reg
@@ -215,6 +236,8 @@ impl I2C {
                 .to
                 .write(|w| w.time_out_reg().bits(tout.into()).time_out_en().set_bit());
         }
+
+        Ok(())
     }
 
     /// Start the actual transmission on a previously configured command set
@@ -385,7 +408,7 @@ impl I2C {
         Ok(())
     }
 
-    /// Send bytes to a target slave with the address `addr`
+    /// Send data bytes from the `bytes` array to a target slave with the address `addr`
     fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Error> {
         // Load actual data into fifo
         // TODO: Handle the case where we transfer an amount of data that is exceeding the
@@ -405,7 +428,8 @@ impl I2C {
         self.execute_transmission()
     }
 
-    // TODO: Enable ACK checks and return error if ACK check fails
+    /// Read bytes from a target slave with the address `addr`
+    /// The number of read bytes is deterimed by the size of the `buffer` argument
     fn read(&mut self, addr: u8, buffer: &mut [u8]) -> Result<(), Error> {
         // If the buffer size is > 32 bytes, this signals the
         // intent to read more than that number of bytes, which we
@@ -436,7 +460,8 @@ impl I2C {
         Ok(())
     }
 
-    // TODO: Enable ACK checks and return error if ACK check fails
+    /// Write bytes from the `bytes` array first and then read n bytes into
+    /// the `buffer` array with n being the size of the array.
     fn write_read(&mut self, addr: u8, bytes: &[u8], buffer: &mut [u8]) -> Result<(), Error> {
         // If the buffer or bytes size is > 32 bytes, this signals the
         // intent to read/write more than that number of bytes, which we
@@ -508,7 +533,6 @@ impl WriteRead for I2C {
 /// Pins used by the I2C interface
 ///
 /// Note that any two pins may be used
-/// TODO: enforce this in the type system
 pub struct Pins<SDA: OutputPin + InputPin, SCL: OutputPin + InputPin> {
     pub sda: SDA,
     pub scl: SCL,
