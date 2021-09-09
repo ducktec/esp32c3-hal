@@ -1,4 +1,4 @@
-//! I2C Functionality (I2C)
+//! (Blocking) I2C Functionality (I2C)
 //!
 //! Reference: ESP32-C3 TRM v0.3 Section XX (as TRM)
 //!
@@ -13,7 +13,6 @@
 //! This file is derived from the esp32-hal implementation.
 //!
 //! TODO:
-//! - Prototypical support
 //! - Interrupt support
 
 use core::convert::TryInto;
@@ -57,8 +56,6 @@ impl I2C {
         frequency: u32,
     ) -> Result<Self, SetupError> {
         let mut i2c = I2C { reg: instance };
-
-        // FIXME: Ensure/Check that the peripheral is actually switched on
 
         // Setup Pins
         pins.sda
