@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../esp32c3"
+		}
+	],
+	"settings": {
+		"rust-analyzer.cargo.target": "riscv32imc-unknown-none-elf",
+		"rust-analyzer.checkOnSave.allTargets": false,
+		"rust-analyzer.cargo.allFeatures": false
+	}
+}
