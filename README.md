@@ -1,6 +1,6 @@
 # ESP32-C3 HAL
 
-[![Build Status](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yaml/badge.svg)](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yaml)
+[![Build Status](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yml/badge.svg)](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yml)
 
 This is an **experimental** Rust HAL crate for the [ESP32-C3 SoC](https://www.espressif.com/en/products/socs/esp32-c3).
 
