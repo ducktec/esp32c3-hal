@@ -1,31 +1,27 @@
 # ESP32-C3 HAL
 
+[![Build Status](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yaml/badge.svg)](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yaml)
+
 This is an **experimental** Rust HAL crate for the [ESP32-C3 SoC](https://www.espressif.com/en/products/socs/esp32-c3).
 
-> :warning: Please note the emphasis on **experimental**! Very little works (yet) and what works is not comprehsively tested and will almost certainly contain bugs 
+> :warning: Please note the emphasis on **experimental**! Very little works (yet) and what works is not comprehsively tested and will almost certainly contain bugs. Please don't use for real projects at this point in time. The API can and will change.
 
 ## Status
 
-The following table contains a list of ESP32-C3 relevant functional components and their support status within this hal crate:
+The following table contains a list of ESP32-C3 functional components that are planned to be supported at this point and their support status within this hal crate:
 
-| Functional Component             | Fully Documented in TRM v0.3 | Prototype/Partial Support  | Full Support       |
-| -------------------------------- | ---------------------------- | -------------------------- | ------------------ |
-| TIMG (Timer + WDT)               | :x:                          | :heavy_check_mark:         | :x:                |
-| UART                             | :heavy_check_mark:           | :heavy_check_mark:         | :x:                |
-| SPI                              | :x:                          | :x:                        | :x:                |
-| I2C                              | :x:                          | :x:                        | :x:                |
-| GPIO                             | :x:                          | :x:                        | :x:                |
-| System Timer                     | :x:                          | :x:                        | :x:                |
-| (Low-Power) Management           | :x:                          | :x:                        | :x:                |
-| LED PWM                          | :x:                          | :x:                        | :x:                |
-| USB Serial/JTAG Controller       | :x:                          | :x:                        | :x:                |
-| SHA Accelerator                  | :x:                          | :x:                        | :x:                |
-| AES Accelerator                  | :x:                          | :x:                        | :x:                |
-| RSA Accelerator                  | :x:                          | :x:                        | :x:                |
-| HMAC Accelerator                 | :x:                          | :x:                        | :x:                |
-| Digital Signature                | :x:                          | :x:                        | :x:                |
-| Random Number Generator          | :x:                          | :x:                        | :x:                |
-| Remote Control Peripheral        | :x:                          | :x:                        | :x:                |
+| Functional Component             | Prototype/Partial Support  |
+| -------------------------------- | -------------------------- |
+| TIMG (Timer + WDT)               | :heavy_check_mark:         |
+| UART                             | :heavy_check_mark:         |
+| SPI                              | :x:                        |
+| I2C                              | :heavy_check_mark:         |
+| GPIO                             | :heavy_check_mark:         |
+| System Timer                     | :x:                        |
+| (Low-Power) Management           | :x:                        |
+| LED PWM                          | :x:                        |
+| USB Serial/JTAG Controller       | :x:                        |
+| Remote Control Peripheral        | :x:                        |
 
 ## Necessary Tools
 
@@ -65,10 +61,8 @@ esptool.py --port /dev/ttyUSB0 --chip esp32c3 write_flash --flash_mode dio --fla
 The HAL comes with a number of examples:
 - `empty.rs`: Start and enter an endless loop. This is to demonstrate that all relevant watchdogs can be disabled and the SoC does not continuously reset.
 - `hello_world.rs`: Write "Hello World" to UART0 (with the default pins) every second.
-
-## Additional Documentation
-
-- A step-by-step guide on how to debug a rust application on an ESP32-C3 Soc is provided [here](/documentation/debugging.md).
+- `uart_loopback.rs`: Read from UART0 and write back to UART0.
+- `blinky.rs`: Switch an LED that is connected to GPIO2 on and off every second
 
 ## MSRV
 
