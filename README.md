@@ -62,7 +62,7 @@ The HAL comes with a number of examples:
 - `empty.rs`: Start and enter an endless loop. This is to demonstrate that all relevant watchdogs can be disabled and the SoC does not continuously reset.
 - `hello_world.rs`: Write "Hello World" to UART0 (with the default pins) every second.
 - `uart_loopback.rs`: Read from UART0 and write back to UART0.
-- `blinky.rs`: Switch an LED that is connected to GPIO2 on and off every second
+- `blinky.rs`: Toggle a LED that is connected to GPIO2 every second.
 
 ## MSRV
 
@@ -78,7 +78,7 @@ Licensed under either of
 
 at your option.
 
-This project makes use of original and modified code from the [esp32-hal] project, which is published under the same two licensing options and is used under the MIT license in this context. This code use is reflected in the included license file.
+This project makes use of original and modified code from the [esp32-hal](https://github.com/esp-rs/esp32-hal) project, which is published under the same two licensing options and is used under the MIT license in this context. This code use is reflected in the included license file.
 
 ### Contribution
 
