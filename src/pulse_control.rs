@@ -5,7 +5,7 @@
 //! The ESP32-C3 includes a remote control peripheral (RMT) that
 //! is designed to handle infrared remote control signals. For that
 //! purpose, it can convert bitstreams of data (from the RAM) into
-//! pulse codes (and even modulate those codes into a carrier wave).
+//! pulse codes and even modulate those codes into a carrier wave.
 //!
 //! It can also convert received pulse codes (again, with carrier
 //! wave support) into data bits.
@@ -20,10 +20,7 @@
 
 #![deny(missing_docs)]
 
-use crate::pac::rmt;
 use crate::pac::RMT;
-
-pub use rmt::*;
 
 /// Errors that can occur when the peripheral is configured
 #[derive(Debug)]
@@ -35,7 +32,24 @@ pub enum SetupError {
 
 /// Errors that can occur during a transmission attempt
 #[derive(Debug)]
-pub enum TransmissionError {}
+pub enum TransmissionError {
+    /// Generic Transmission Error
+    Failure,
+    /// The maximum number of transmissions (`=(2^10)-1`) was exceeded
+    RepetitionOverflow,
+}
+
+/// Specifies the mode with which pulses are sent out in
+/// send channels (ch0 and ch1)
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum RepeatMode {
+    /// Send sequence once
+    SingleShot,
+    /// Send sequence N times (`N < (2^10)`)
+    RepeatNtimes(u16),
+    /// Repeat sequence until stopped by additional function call
+    Forever,
+}
 
 /// RMT peripheral (RMT)
 pub struct PulseControl {
@@ -202,25 +216,17 @@ impl PulseControl {
 }
 
 macro_rules! impl_output_channel {
-    ($cxi:ident: ($channel_num:expr, $conf0_reg:ident, $data_reg:ident)
+    ($cxi:ident: ($conf0_reg:ident, $data_reg:ident, $lim_reg:ident, $int_complete:ident, $int_err:ident, $int_seq:ident, $int_complete_clr:ident, $int_err_clr:ident, $int_seq_clr:ident)
         ) => {
-        /// Output Channel
+        /// TX Output Channel
         pub struct $cxi {}
         impl $cxi {
-            /// Enable/Disable the continous sending mode
-            pub fn set_continuous_mode(&mut self, state: bool) -> &mut Self {
-                unsafe { &*RMT::ptr() }
-                    .$conf0_reg
-                    .modify(|_, w| w.tx_conti_mode_ch0().bit(state));
-                self
-            }
-
             /// Set the logical level that the connected pin is pulled to
             /// while the channel is idle
             pub fn set_idle_output_level(&mut self, level: bool) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
-                    .modify(|_, w| w.idle_out_lv_ch0().bit(level));
+                    .modify(|_, w| w.idle_out_lv().bit(level));
                 self
             }
 
@@ -228,7 +234,7 @@ macro_rules! impl_output_channel {
             pub fn set_idle_output(&mut self, state: bool) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
-                    .modify(|_, w| w.idle_out_en_ch0().bit(state));
+                    .modify(|_, w| w.idle_out_en().bit(state));
                 self
             }
 
@@ -236,7 +242,7 @@ macro_rules! impl_output_channel {
             pub fn set_channel_divider(&mut self, divider: u8) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
-                    .modify(|_, w| unsafe { w.div_cnt_ch0().bits(divider) });
+                    .modify(|_, w| unsafe { w.div_cnt().bits(divider) });
                 self
             }
 
@@ -244,13 +250,14 @@ macro_rules! impl_output_channel {
             pub fn set_carrier_modulation(&mut self, state: bool) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
-                    .modify(|_, w| w.carrier_en_ch0().bit(state));
+                    .modify(|_, w| w.carrier_en().bit(state));
                 self
             }
 
             /// Send an pulse sequence in a blocking fashion
             pub fn send_pulse_sequence(
                 &self,
+                repeat_mode: &RepeatMode,
                 sequence: &[PulseCode],
             ) -> Result<(), TransmissionError> {
                 // Write the sequence
@@ -259,34 +266,109 @@ macro_rules! impl_output_channel {
                 // Write the end marker (value "0")
                 self.load_fifo(0 as u32);
 
-                // Enable configuration
-                unsafe { &*RMT::ptr() }.$conf0_reg.modify(|_, w| {
-                    // Set config update bit
-                    w.conf_update_ch0().set_bit()
+                // Check how we need to configure the continuous mode flag
+                let (cont_mode, count_mode, reps) = match repeat_mode {
+                    RepeatMode::SingleShot => (false, false, 0),
+                    RepeatMode::RepeatNtimes(val) => {
+                        if *val >= 1024 {
+                            return Err(TransmissionError::RepetitionOverflow);
+                        }
+
+                        (true, true, *val)
+                    }
+                    RepeatMode::Forever => (true, false, 0),
+                };
+
+                // Configure counting mode and repetitions
+                unsafe { &*RMT::ptr() }.$lim_reg.modify(|_, w| unsafe {
+                    // Set number of repetitions
+                    w.tx_loop_num()
+                        .bits(reps)
+                        // Enable loop counting
+                        .tx_loop_cnt_en()
+                        .bit(count_mode)
+                        // Reset any pre-existing counting value
+                        .loop_count_reset()
+                        .set_bit()
                 });
 
-                // TODO: Clear the relevant interrupts
+                // Setup configuration
+                unsafe { &*RMT::ptr() }.$conf0_reg.modify(|_, w| {
+                    // Set config update bit and configure continuous
+                    w.conf_update().set_bit().tx_conti_mode().bit(cont_mode)
+                });
+
+                // Clear the relevant interrupts
+                //
+                // (since this is a write-through register, we can do this
+                // safely for multiple separate channel instances without
+                // having concurrency issues)
+                unsafe { &*RMT::ptr() }.int_clr.write(|w| {
+                    w.$int_complete_clr()
+                        .set_bit()
+                        .$int_err_clr()
+                        .set_bit()
+                        .$int_seq_clr()
+                        .set_bit()
+                });
 
                 // Trigger the release of the sequence by the RMT peripheral
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
-                    .modify(|_, w| w.tx_start_ch0().set_bit());
+                    .modify(|_, w| w.tx_start().set_bit());
 
-                // Do busy waiting
-                // loop {
-                //     let interrupts = unsafe { &*RMT::ptr() }.int_raw.read();
-                //     match(interrupt & )
-                // }
+                // If we're in forever mode, we return right away, otherwise we wait
+                // for completion
+                if *repeat_mode != RepeatMode::Forever {
+                    // Wait for interrupt being raised, either completion or error
+                    loop {
+                        let interrupts = unsafe { &*RMT::ptr() }.int_raw.read();
+                        match (
+                            interrupts.$int_complete().bit(),
+                            interrupts.$int_seq().bit(),
+                            interrupts.$int_err().bit(),
+                        ) {
+                            // SingleShot completed and no error -> success
+                            (true, false, false) => break,
+                            // Sequence completed and no error -> success
+                            (false, true, false) => {
+                                // Stop transmitting (only necessary in sequence case)
+                                unsafe { &*RMT::ptr() }
+                                    .$conf0_reg
+                                    .modify(|_, w| w.tx_stop().set_bit());
+                                break;
+                            }
+                            // Neither completed nor error -> continue busy waiting
+                            (false, false, false) => (),
+                            // Anything else constitutes an error state
+                            _ => return Err(TransmissionError::Failure),
+                        }
+                    }
+                }
 
                 Ok(())
             }
 
+            /// Stop any ongoing (repetitive) transmission
+            ///
+            /// This function needs to be called to stop sending when
+            /// previously a sequence was sent with `RepeatMode::Forever`.
+            pub fn stop_transmission(&self) {
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| w.tx_stop().set_bit());
+            }
+
+            /// Convert a sequence of pulse code structs into u32 and write them
+            /// into the RMT fifo buffer
             fn write_sequence(&self, sequence: &[PulseCode]) {
                 for pulse in sequence {
                     self.load_fifo(pulse.into());
                 }
             }
 
+            /// Write a singular pulse code sequence (two levels with each assigned a duration)
+            /// into the RMT fifo buffer
             fn load_fifo(&self, value: u32) {
                 unsafe { &*RMT::ptr() }
                     .$data_reg
@@ -296,4 +378,31 @@ macro_rules! impl_output_channel {
     };
 }
 
-impl_output_channel!(Channel0: (0, ch0conf0, ch0data));
+impl_output_channel!(
+    Channel0:
+        (
+            ch0conf0,
+            ch0data,
+            ch0_tx_lim,
+            ch0_tx_end_int_raw,
+            ch0_err_int_raw,
+            ch0_tx_loop_int_raw,
+            ch0_tx_end_int_clr,
+            ch0_err_int_clr,
+            ch0_tx_loop_int_clr
+        )
+);
+impl_output_channel!(
+    Channel1:
+        (
+            ch1conf0,
+            ch1data,
+            ch1_tx_lim,
+            ch1_tx_end_int_raw,
+            ch1_err_int_raw,
+            ch1_tx_loop_int_raw,
+            ch1_tx_end_int_clr,
+            ch1_err_int_clr,
+            ch1_tx_loop_int_clr
+        )
+);
