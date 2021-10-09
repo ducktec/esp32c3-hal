@@ -20,15 +20,22 @@
 
 #![deny(missing_docs)]
 
+use crate::pac::rmt;
 use crate::pac::RMT;
 
-/// RMT-specific errors
+pub use rmt::*;
+
+/// Errors that can occur when the peripheral is configured
 #[derive(Debug)]
-pub enum Error {
+pub enum SetupError {
     /// The global configuration for the RMT peripheral is invalid
     /// (e.g. the fractional parameters are outOfBound)
     InvalidGlobalConfig,
 }
+
+/// Errors that can occur during a transmission attempt
+#[derive(Debug)]
+pub enum TransmissionError {}
 
 /// RMT peripheral (RMT)
 pub struct PulseControl {
@@ -54,6 +61,51 @@ struct Configuration {
     divider_frac_b: u8,
 }
 
+/// Object representing the state of one pulse code per ESP32-C3 TRM
+/// Allows for the assignment of two levels and their lenghts
+#[derive(Clone, Copy, Debug)]
+pub struct PulseCode {
+    /// Logical output level in the first pulse code interval
+    pub level1: bool,
+    /// Length of the first pulse code interval
+    pub length1: u16,
+    /// Logical output level in the second pulse code interval
+    pub level2: bool,
+    /// Length of the second pulse code interval
+    pub length2: u16,
+}
+
+/// Convert a pulse code structure into a u32 value that can be written
+/// into the data registers
+impl From<&PulseCode> for u32 {
+    fn from(p: &PulseCode) -> u32 {
+        // The Pulse Code format in the RAM appears to be
+        // little-endian
+
+        // The length1 value resides in bits [14:0]
+        let mut entry: u32 = p.length1.into();
+
+        // If level1 is high, set bit 15, otherwise clear it
+        if p.level1 {
+            entry |= 1 << 15;
+        } else {
+            entry &= !(1 << 15);
+        }
+
+        // If level2 is high, set bit 31, otherwise clear it
+        if p.level2 {
+            entry |= 1 << 31;
+        } else {
+            entry &= !(1 << 31);
+        }
+
+        // The length2 value resides in bits [30:16]
+        entry |= (p.length2 as u32) << 16;
+
+        entry
+    }
+}
+
 impl PulseControl {
     /// Create a new pulse controller instance
     pub fn new(
@@ -62,7 +114,7 @@ impl PulseControl {
         div_abs: u8,
         div_frac_a: u8,
         div_frac_b: u8,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, SetupError> {
         let pc = PulseControl {
             reg: instance,
             config: Configuration {
@@ -95,16 +147,19 @@ impl PulseControl {
     ///
     /// divider = absolute_part + 1 + (fractional_part_a / fractional_part_b)
     ///
-    fn config_global(&self) -> Result<(), Error> {
+    fn config_global(&self) -> Result<(), SetupError> {
         // Before assigning, confirm that the fractional parameters for
         // the divider are within bounds
         if self.config.divider_frac_a > 64 || self.config.divider_frac_b > 64 {
-            return Err(Error::InvalidGlobalConfig);
+            return Err(SetupError::InvalidGlobalConfig);
         }
 
         // TODO: Confirm that the selected clock source is enabled in the
         // system / rtc_cntl peripheral? Particularly relevant for clock sources
         // other than APB_CLK
+
+        // TODO: Confirm that the peripheral is not in a reset state and that the
+        // peripheral clock (for the registers) is enabled
 
         // Configure peripheral
         self.reg.sys_conf.modify(|_, w| unsafe {
@@ -145,3 +200,100 @@ impl PulseControl {
         Ok(())
     }
 }
+
+macro_rules! impl_output_channel {
+    ($cxi:ident: ($channel_num:expr, $conf0_reg:ident, $data_reg:ident)
+        ) => {
+        /// Output Channel
+        pub struct $cxi {}
+        impl $cxi {
+            /// Enable/Disable the continous sending mode
+            pub fn set_continuous_mode(&mut self, state: bool) -> &mut Self {
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| w.tx_conti_mode_ch0().bit(state));
+                self
+            }
+
+            /// Set the logical level that the connected pin is pulled to
+            /// while the channel is idle
+            pub fn set_idle_output_level(&mut self, level: bool) -> &mut Self {
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| w.idle_out_lv_ch0().bit(level));
+                self
+            }
+
+            /// Enable/Disable the output while the channel is idle
+            pub fn set_idle_output(&mut self, state: bool) -> &mut Self {
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| w.idle_out_en_ch0().bit(state));
+                self
+            }
+
+            /// Set channel clock divider value
+            pub fn set_channel_divider(&mut self, divider: u8) -> &mut Self {
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| unsafe { w.div_cnt_ch0().bits(divider) });
+                self
+            }
+
+            /// Enable/Disable carrier modulation
+            pub fn set_carrier_modulation(&mut self, state: bool) -> &mut Self {
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| w.carrier_en_ch0().bit(state));
+                self
+            }
+
+            /// Send an pulse sequence in a blocking fashion
+            pub fn send_pulse_sequence(
+                &self,
+                sequence: &[PulseCode],
+            ) -> Result<(), TransmissionError> {
+                // Write the sequence
+                self.write_sequence(sequence);
+
+                // Write the end marker (value "0")
+                self.load_fifo(0 as u32);
+
+                // Enable configuration
+                unsafe { &*RMT::ptr() }.$conf0_reg.modify(|_, w| {
+                    // Set config update bit
+                    w.conf_update_ch0().set_bit()
+                });
+
+                // TODO: Clear the relevant interrupts
+
+                // Trigger the release of the sequence by the RMT peripheral
+                unsafe { &*RMT::ptr() }
+                    .$conf0_reg
+                    .modify(|_, w| w.tx_start_ch0().set_bit());
+
+                // Do busy waiting
+                // loop {
+                //     let interrupts = unsafe { &*RMT::ptr() }.int_raw.read();
+                //     match(interrupt & )
+                // }
+
+                Ok(())
+            }
+
+            fn write_sequence(&self, sequence: &[PulseCode]) {
+                for pulse in sequence {
+                    self.load_fifo(pulse.into());
+                }
+            }
+
+            fn load_fifo(&self, value: u32) {
+                unsafe { &*RMT::ptr() }
+                    .$data_reg
+                    .write(|w| unsafe { w.bits(value) });
+            }
+        }
+    };
+}
+
+impl_output_channel!(Channel0: (0, ch0conf0, ch0data));
