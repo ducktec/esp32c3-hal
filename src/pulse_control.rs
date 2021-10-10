@@ -130,6 +130,41 @@ impl From<&PulseCode> for u32 {
     }
 }
 
+/// Functionality that every OutputChannel supports
+pub trait OutputChannel {
+    /// Set the logical level that the connected pin is pulled to
+    /// while the channel is idle
+    fn set_idle_output_level(&mut self, level: bool) -> &mut Self;
+
+    /// Enable/Disable the output while the channel is idle
+    fn set_idle_output(&mut self, state: bool) -> &mut Self;
+
+    /// Set channel clock divider value
+    fn set_channel_divider(&mut self, divider: u8) -> &mut Self;
+
+    /// Enable/Disable carrier modulation
+    fn set_carrier_modulation(&mut self, state: bool) -> &mut Self;
+
+    /// Assign a pin that should be driven by this channel
+    ///
+    /// (Note that we only take a reference here, so the ownership remais with the calling
+    /// entity. The configured pin thus can be re-configured independently.)
+    fn configure_pin<RmtPin: OutputPin>(&mut self, pin: &mut RmtPin) -> &mut Self;
+
+    /// Send an pulse sequence in a blocking fashion
+    fn send_pulse_sequence(
+        &self,
+        repeat_mode: RepeatMode,
+        sequence: &[PulseCode],
+    ) -> Result<(), TransmissionError>;
+
+    /// Stop any ongoing (repetitive) transmission
+    ///
+    /// This function needs to be called to stop sending when
+    /// previously a sequence was sent with `RepeatMode::Forever`.
+    fn stop_transmission(&self);
+}
+
 impl PulseControl {
     /// Create a new pulse controller instance
     pub fn new(
@@ -147,8 +182,8 @@ impl PulseControl {
                 divider_frac_a: div_frac_a,
                 divider_frac_b: div_frac_b,
             },
-            channel0: Channel0 {},
-            channel1: Channel1 {},
+            channel0: Channel0::new(),
+            channel1: Channel1::new(),
         };
 
         pc.config_global()?;
@@ -229,9 +264,62 @@ macro_rules! impl_output_channel {
         /// TX Output Channel
         pub struct $cxi {}
         impl $cxi {
+            /// Create a new channel instance
+            pub fn new() -> Self {
+                let channel = $cxi {};
+
+                // Apply default configuration
+                unsafe { &*RMT::ptr() }.$conf0_reg.modify(|_, w| unsafe {
+                    // Disable continuous mode
+                    w.tx_conti_mode()
+                        .clear_bit()
+                        // Disable wrap mode
+                        .mem_tx_wrap_en()
+                        .clear_bit()
+                        // Set idle output value to low
+                        .idle_out_lv()
+                        .clear_bit()
+                        // Disable idle output
+                        .idle_out_en()
+                        .clear_bit()
+                        // Configure channel divider
+                        .div_cnt()
+                        .bits(1)
+                        // Configure memory block size
+                        .mem_size()
+                        .bits(1)
+                        // Disable carrier modulation
+                        .carrier_en()
+                        .clear_bit()
+                        // Set config bit
+                        .conf_update()
+                        .set_bit()
+                });
+
+                channel
+            }
+
+            /// Convert a sequence of pulse code structs into u32 and write them
+            /// into the RMT fifo buffer
+            fn write_sequence(&self, sequence: &[PulseCode]) {
+                for pulse in sequence {
+                    self.load_fifo(pulse.into());
+                }
+            }
+
+            /// Write a singular pulse code sequence (two levels with each assigned a duration)
+            /// into the RMT fifo buffer
+            fn load_fifo(&self, value: u32) {
+                unsafe { &*RMT::ptr() }
+                    .$data_reg
+                    .write(|w| unsafe { w.bits(value) });
+            }
+        }
+
+        impl OutputChannel for $cxi {
             /// Set the logical level that the connected pin is pulled to
             /// while the channel is idle
-            pub fn set_idle_output_level(&mut self, level: bool) -> &mut Self {
+            fn set_idle_output_level(&mut self, level: bool) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
                     .modify(|_, w| w.idle_out_lv().bit(level));
@@ -239,7 +327,7 @@ macro_rules! impl_output_channel {
             }
 
             /// Enable/Disable the output while the channel is idle
-            pub fn set_idle_output(&mut self, state: bool) -> &mut Self {
+            fn set_idle_output(&mut self, state: bool) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
                     .modify(|_, w| w.idle_out_en().bit(state));
@@ -247,7 +335,7 @@ macro_rules! impl_output_channel {
             }
 
             /// Set channel clock divider value
-            pub fn set_channel_divider(&mut self, divider: u8) -> &mut Self {
+            fn set_channel_divider(&mut self, divider: u8) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
                     .modify(|_, w| unsafe { w.div_cnt().bits(divider) });
@@ -255,7 +343,7 @@ macro_rules! impl_output_channel {
             }
 
             /// Enable/Disable carrier modulation
-            pub fn set_carrier_modulation(&mut self, state: bool) -> &mut Self {
+            fn set_carrier_modulation(&mut self, state: bool) -> &mut Self {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
                     .modify(|_, w| w.carrier_en().bit(state));
@@ -266,7 +354,7 @@ macro_rules! impl_output_channel {
             ///
             /// (Note that we only take a reference here, so the ownership remais with the calling
             /// entity. The configured pin thus can be re-configured independently.)
-            pub fn configure_pin<RmtPin: OutputPin>(&mut self, pin: &mut RmtPin) -> &mut Self {
+            fn configure_pin<RmtPin: OutputPin>(&mut self, pin: &mut RmtPin) -> &mut Self {
                 // Configure Pin as output anc connect to signal
                 pin.set_to_push_pull_output()
                     .connect_peripheral_to_output(OutputSignal::RMT_SIG_0);
@@ -275,9 +363,9 @@ macro_rules! impl_output_channel {
             }
 
             /// Send an pulse sequence in a blocking fashion
-            pub fn send_pulse_sequence(
+            fn send_pulse_sequence(
                 &self,
-                repeat_mode: &RepeatMode,
+                repeat_mode: RepeatMode,
                 sequence: &[PulseCode],
             ) -> Result<(), TransmissionError> {
                 // Write the sequence
@@ -290,11 +378,11 @@ macro_rules! impl_output_channel {
                 let (cont_mode, count_mode, reps) = match repeat_mode {
                     RepeatMode::SingleShot => (false, false, 0),
                     RepeatMode::RepeatNtimes(val) => {
-                        if *val >= 1024 {
+                        if val >= 1024 {
                             return Err(TransmissionError::RepetitionOverflow);
                         }
 
-                        (true, true, *val)
+                        (true, true, val)
                     }
                     RepeatMode::Forever => (true, false, 0),
                 };
@@ -315,7 +403,15 @@ macro_rules! impl_output_channel {
                 // Setup configuration
                 unsafe { &*RMT::ptr() }.$conf0_reg.modify(|_, w| {
                     // Set config update bit and configure continuous
-                    w.conf_update().set_bit().tx_conti_mode().bit(cont_mode)
+                    // (also reset FIFO buffer pointers)
+                    w.conf_update()
+                        .set_bit()
+                        .tx_conti_mode()
+                        .bit(cont_mode)
+                        .mem_rd_rst()
+                        .set_bit()
+                        .apb_mem_rst()
+                        .set_bit()
                 });
 
                 // Clear the relevant interrupts
@@ -339,7 +435,7 @@ macro_rules! impl_output_channel {
 
                 // If we're in forever mode, we return right away, otherwise we wait
                 // for completion
-                if *repeat_mode != RepeatMode::Forever {
+                if repeat_mode != RepeatMode::Forever {
                     // Wait for interrupt being raised, either completion or error
                     loop {
                         let interrupts = unsafe { &*RMT::ptr() }.int_raw.read();
@@ -373,26 +469,10 @@ macro_rules! impl_output_channel {
             ///
             /// This function needs to be called to stop sending when
             /// previously a sequence was sent with `RepeatMode::Forever`.
-            pub fn stop_transmission(&self) {
+            fn stop_transmission(&self) {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
                     .modify(|_, w| w.tx_stop().set_bit());
-            }
-
-            /// Convert a sequence of pulse code structs into u32 and write them
-            /// into the RMT fifo buffer
-            fn write_sequence(&self, sequence: &[PulseCode]) {
-                for pulse in sequence {
-                    self.load_fifo(pulse.into());
-                }
-            }
-
-            /// Write a singular pulse code sequence (two levels with each assigned a duration)
-            /// into the RMT fifo buffer
-            fn load_fifo(&self, value: u32) {
-                unsafe { &*RMT::ptr() }
-                    .$data_reg
-                    .write(|w| unsafe { w.bits(value) });
             }
         }
     };
