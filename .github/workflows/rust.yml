@@ -26,7 +26,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --target=riscv32imc-unknown-none-elf
+          args: --target=riscv32imc-unknown-none-elf --all
 
       - uses: actions-rs/cargo@v1
         with:
