@@ -17,9 +17,12 @@
 //!
 //! Non-FIFO mode and non-blocking mode (i.e., with interrupts) is
 //! currently not supported!
+//!
+//! Also, the input channels are currently not supported!
 
 #![deny(missing_docs)]
 
+use crate::gpio::{OutputPin, OutputSignal};
 use crate::pac::RMT;
 
 /// Errors that can occur when the peripheral is configured
@@ -28,6 +31,9 @@ pub enum SetupError {
     /// The global configuration for the RMT peripheral is invalid
     /// (e.g. the fractional parameters are outOfBound)
     InvalidGlobalConfig,
+    /// A pin was already assigned to the channel, at this point in
+    /// time, only one assigned pin per channel is supported
+    PinAlreadyAssigned,
 }
 
 /// Errors that can occur during a transmission attempt
@@ -55,6 +61,10 @@ pub enum RepeatMode {
 pub struct PulseControl {
     reg: RMT,
     config: Configuration,
+    /// Output Channel 0
+    pub channel0: Channel0,
+    /// Output Channel 1
+    pub channel1: Channel1,
 }
 
 /// Specify the clock source for the RMT peripheral
@@ -137,13 +147,11 @@ impl PulseControl {
                 divider_frac_a: div_frac_a,
                 divider_frac_b: div_frac_b,
             },
+            channel0: Channel0 {},
+            channel1: Channel1 {},
         };
 
         pc.config_global()?;
-
-        // Setup Pin
-        // pin.set_to_push_pull_output()
-        //     .connect_peripheral_to_output(OutputSignal::LEDC_LS_SIG0);
 
         Ok(pc)
     }
@@ -251,6 +259,18 @@ macro_rules! impl_output_channel {
                 unsafe { &*RMT::ptr() }
                     .$conf0_reg
                     .modify(|_, w| w.carrier_en().bit(state));
+                self
+            }
+
+            /// Assign a pin that should be driven by this channel
+            ///
+            /// (Note that we only take a reference here, so the ownership remais with the calling
+            /// entity. The configured pin thus can be re-configured independently.)
+            pub fn configure_pin<RmtPin: OutputPin>(&mut self, pin: &mut RmtPin) -> &mut Self {
+                // Configure Pin as output anc connect to signal
+                pin.set_to_push_pull_output()
+                    .connect_peripheral_to_output(OutputSignal::RMT_SIG_0);
+
                 self
             }
 
