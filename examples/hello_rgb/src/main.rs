@@ -46,7 +46,7 @@ fn main() -> ! {
         .modify(|_, w| w.rmt_rst().clear_bit());
 
     // Configure RMT peripheral globally
-    let pulse = PulseControl::new(peripherals.RMT, ClockSource::APB, 0, 100, 100).unwrap();
+    let pulse = PulseControl::new(peripherals.RMT, ClockSource::APB, 0, 0, 0).unwrap();
 
     // Get reference to used channel (we use channel 0 for our purposes)
     let mut rgb_channel = pulse.channel0;
