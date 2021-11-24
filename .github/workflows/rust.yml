@@ -10,8 +10,7 @@ jobs:
         rust:
           - stable
           - beta
-          #- nightly due to a bug in compiler-builtins, the nightly builds
-          # currently fail -> ignore until upstream bug is fixed
+          - nightly
 
     steps:
       - uses: actions/checkout@v2

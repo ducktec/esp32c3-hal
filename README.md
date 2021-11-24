@@ -38,25 +38,31 @@ The ESP32-C3 is based on the RISCV architecture. To build code for this architec
 rustup target add riscv32imc-unknown-none-elf
 ```
 
-Next, install the [`espflash`](https://github.com/esp-rs/espflash) tool that will take care of building and flashing the examples (and future applications based on `esp32c3-hal`):
+Next, build one of the examples:
+
 ```bash
-cargo install cargo-espflash
+cargo build --example empty
 ```
 
-Use the following command to build and flash an example application to a connected ESP32-C3 board:
+The file was compiled into an elf file, more specifically a `ELF 32-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), statically linked`. Next, it needs to be converted into a binary file that can be flashed:
+
 ```bash
-cargo espflash --package hello-world-demo /dev/tty.usbserial-10
+riscv32-elf-objcopy -O binary ./target/riscv32imc-unknown-none-elf/debug/examples/empty empty.bin
 ```
-Update the port (last argument) depending on your host system.
+
+Finally, that file can be flashed onto the ESP32-C3 (the port may vary):
+
+```bash
+esptool.py --port /dev/ttyUSB0 --chip esp32c3 write_flash --flash_mode dio --flash_size detect --flash_freq 80m 0x0 empty.bin
+```
 
 ## Examples
 
-The HAL [cargo workspace](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) currently comes with the following example packages (to be built/flashed using the `--package` option)
-- `blinky-demo`: Toggle a LED that is connected to GPIO2 every second.
-- `empty-demo`: Start and enter an endless loop. This is to demonstrate that all relevant watchdogs can be disabled and the SoC does not continuously reset.
-- `hello-world-demo`: Write "Hello World" to UART0 (with the default pins) every second.
-- `i2c-display-demo`: Display text on an monochrome OLED with a SSD1306 driver IC (via I2C).
-- `uart-loopback-demo`: Read from UART0 and write back to UART0.
+The HAL comes with a number of examples:
+- `empty.rs`: Start and enter an endless loop. This is to demonstrate that all relevant watchdogs can be disabled and the SoC does not continuously reset.
+- `hello_world.rs`: Write "Hello World" to UART0 (with the default pins) every second.
+- `uart_loopback.rs`: Read from UART0 and write back to UART0.
+- `blinky.rs`: Toggle a LED that is connected to GPIO2 every second.
 
 ## MSRV
 
@@ -81,4 +87,4 @@ for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 dual licensed as above, without any additional terms or conditions.
 
 ## Resources
-- [Technical Reference Manual](https://www.espressif.com/sites/default/files/documentation/esp32-c3_technical_reference_manual_en.pdf)
+- [Technical Reference Manual v0.3](https://www.espressif.com/sites/default/files/documentation/esp32-c3_technical_reference_manual_en.pdf)

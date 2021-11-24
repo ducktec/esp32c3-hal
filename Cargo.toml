@@ -29,6 +29,3 @@ default=[]
 
 [workspace]
 members = ["examples/*"]
-
-[package.metadata.espflash]
-format = "direct-boot"
