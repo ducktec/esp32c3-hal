@@ -23,13 +23,6 @@ The following table contains a list of ESP32-C3 functional components that are p
 | USB Serial/JTAG Controller       | :x:                        |
 | Remote Control Peripheral        | :x:                        |
 
-## Necessary Tools
-
-A number of utilities are required to build and flash applications based on this HAL onto the ESP32-C3:
-- riscv32-elf-objcopy (e.g. part of `riscv32-elf-binutils` in Arch Linux)
-- [esptool.py](https://github.com/espressif/esptool) 
-
-
 ## Getting Started
 
 The ESP32-C3 is based on the RISCV architecture. To build code for this architecture, download the rust toolchain for this architecture:
@@ -38,7 +31,13 @@ The ESP32-C3 is based on the RISCV architecture. To build code for this architec
 rustup target add riscv32imc-unknown-none-elf
 ```
 
-Next, install the [`espflash`](https://github.com/esp-rs/espflash) tool that will take care of building and flashing the examples (and future applications based on `esp32c3-hal`):
+Next, install the [`espflash`](https://github.com/esp-rs/espflash) tool that will take care of building and flashing applications and examples:
+```bash
+cargo install --git https://github.com/esp-rs/espflash cargo-espflash
+```
+The installation from the git repository is required as the `--package` support of the tool is merged but not yet released.
+
+Once `--package` support is part of the release, it will be enough to run
 ```bash
 cargo install cargo-espflash
 ```
