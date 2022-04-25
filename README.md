@@ -1,3 +1,7 @@
+> # :warning: Abandoned!
+>
+>**This implementation was abandoned in favour of the implementation in [esp-rs/esp-hal](https://github.com/esp-rs/esp-hal). This (already more mature) implementation supports multiple ESP32 variants, the `ESP32-C3` variant being one of them. It is strongly recommended to use `esp-hal` instead!**
+
 # ESP32-C3 HAL
 
 [![Build Status](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yml/badge.svg)](https://github.com/ducktec/esp32c3-hal/actions/workflows/rust.yml)
